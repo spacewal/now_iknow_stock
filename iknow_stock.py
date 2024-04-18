@@ -15,70 +15,54 @@ from tensorflow.keras.models import load_model
 import numpy as np
 import pickle
 
-# Load scaler and model
-# Load scaler and model
+# Load assets
 @st.cache(allow_output_mutation=True)
 def load_assets():
-    scaler_path = 'scaler.pkl'
-    model_path = 'best_model.keras'
-
-    # Load scaler
-    with open(scaler_path, 'rb') as scaler_file:
-        scaler = pickle.load(scaler_file)
-
-    # Load model
-    model = load_model(model_path)
-
+    with open('scaler.pkl', 'rb') as f:
+        scaler = pickle.load(f)
+    model = load_model('best_model.h5')
     return scaler, model
 
-# Preprocess data
-def preprocess_data(stock_data, scaler):
-    stock_data.fillna(method='ffill', inplace=True)  # Forward-fill to handle missing values
-    closing_prices = stock_data['Close'].values.reshape(-1, 1)
-    scaled_data = scaler.transform(closing_prices)
-    X = []
-    for i in range(60, len(scaled_data)):
-        X.append(scaled_data[i-60:i, 0])
-    X = np.array(X)
-    X = np.reshape(X, (X.shape[0], X.shape[1], 1))
-    return X
+scaler, model = load_assets()
 
-# Main page setup
+# Streamlit page setup
 st.title('S&P 500 Stock Price Prediction')
 
 # Fetch S&P 500 tickers
 sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
 sp500['Symbol'] = sp500['Symbol'].str.replace('.', '-')
-symbols_list = sp500['Symbol'].unique().tolist()
+symbols_list = sp500['Symbol'].tolist()
 
-# Selectbox for the user to choose the stock symbol
-selected_symbol = st.selectbox('Select a stock symbol:', symbols_list)
+# Selectbox for user input
+selected_symbol = st.selectbox('Choose a stock symbol:', symbols_list)
 
-# Load model and scaler
-scaler, model = load_assets()
+# Date range selection
+start_date = st.date_input('Start date', value=pd.to_datetime("2022-01-01"))
+end_date = st.date_input('End date', value=pd.to_datetime("today"))
 
-# Get the date range for downloading historical data
-end_date = dt.datetime.now()
-start_date = end_date - pd.DateOffset(days=365*8)
-
-# Download data and make prediction
+# Predict button
 if st.button('Predict'):
-    with st.spinner('Fetching historical data...'):
-        df = yf.download(selected_symbol, start=start_date, end=end_date)
-        st.success('Historical data fetched!')
-
-        with st.spinner('Preprocessing data...'):
-            X = preprocess_data(df, scaler)
-            st.success('Data preprocessed!')
-
-            with st.spinner('Predicting future prices...'):
-                predicted_price = model.predict(X[-1:])  # Predict using the last sequence
-                predicted_price = scaler.inverse_transform(predicted_price)  # Inverse scaling to get actual price
-                st.success('Prediction complete!')
-
-                # Display the prediction
-                st.write(f"The predicted closing price for {selected_symbol} is ${predicted_price[0][0]:.2f}")
-
-# Run the main function
-if __name__ == '__main__':
-    main()
+    # Fetch data
+    data = yf.download(selected_symbol, start=start_date, end=end_date)
+    
+    if not data.empty:
+        # Preprocess data
+        data_filled = data['Close'].fillna(method='ffill').values.reshape(-1,1)
+        scaled_data = scaler.transform(data_filled)
+        X = []
+        for i in range(60, len(scaled_data)):
+            X.append(scaled_data[i-60:i, 0])
+        X = np.array(X)
+        X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+        
+        # Predict using the model
+        predictions = model.predict(X)
+        predicted_prices = scaler.inverse_transform(predictions)
+        
+        # Display the chart of predicted prices
+        st.line_chart(predicted_prices.flatten())
+        
+        # Display predictions
+        st.write("Predictions:", predicted_prices[-1])
+    else:
+        st.error("No data available for the selected stock and date range.")
